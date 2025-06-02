@@ -117,6 +117,11 @@
     (save-registro-exercicio exercise-record)
     exercise-record))
 
+(defn calc-calorias-total [exercises alimentos]
+  (let [total-exercises (reduce + (map :total-calorias exercises))
+        total-alimentos (reduce + (map :calorias alimentos))]
+    (- total-alimentos total-exercises)))
+
 (defroutes app-routes
   (GET "/" [] "Hello World")
   
@@ -163,6 +168,14 @@
   (GET "/alimentos-salvos" []
     (println "Registros: " @registros-alimentacao)
     (json/generate-string (map #(select-keys % [:alimento :calorias]) (vals @registros-alimentacao))))
+
+  (GET "/calorias-total" []
+    (let [exercises (vals @registros-exercicios)
+          alimentos (vals @registros-alimentacao)
+          total-calorias (calc-calorias-total exercises alimentos)]
+      {:status 200
+       :headers {"Content-Type" "application/json; charset=utf-8"}
+       :body (json/generate-string {:total-calorias total-calorias})}))
   
   (POST "/registro-alimentacao" req
     (if (contains? req :body)
