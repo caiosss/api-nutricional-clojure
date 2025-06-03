@@ -130,7 +130,7 @@
       (if (:error calories-data)
         {:status 500 :body (:error calories-data)}
         (let [food-list (take-four-list calories-data)
-              filtered-list (map #(select-keys % [:descricao :calorias]) food-list)]
+              filtered-list (map #(select-keys % [:descricao :calorias]) calories-data)]
           {:status 200 :body (json/generate-string filtered-list)}))))
   
   (GET "/api/exercicios/:exercise" [exercise weight duration]
