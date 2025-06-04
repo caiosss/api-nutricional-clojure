@@ -14,6 +14,10 @@
 (def ninjas-api-key "ftNwvfEmMV6kqZ/1BHF3cA==YBbIT0Vl889PaVSu")
 (def deepl-api-key "26682f17-5995-417f-9a78-761af414c83c:fx")
 
+(def registros-alimentacao (atom {}))
+(def registros-exercicios (atom {}))
+(def user-register (atom {}))
+
 (defn fetch-calories [food]
   (try
     (let [response (client/get (str api-url-comida food) {:as :json})]
@@ -23,21 +27,22 @@
     (catch Exception e
       {:error (str "Error fetching food data: " (.getMessage e))})))
 
-
-(defn fetch-calories-burned [activity & {:keys [weight duration]}]
-  (try
-    (let [params (cond-> {:activity activity}
-                   weight (assoc :weight weight)
-                   duration (assoc :duration duration))
-          response (client/get ninjas-api-url
-                               {:query-params params
-                                :headers {"X-Api-Key" ninjas-api-key}
-                                :as :json})]
-      (if (= 200 (:status response))
-        (:body response)
-        {:error "Unable to fetch calories burned data"}))
-    (catch Exception e
-      {:error (str "Error calling Ninjas API: " (.getMessage e))})))
+(defn fetch-calories-burned
+  ([activity & {:keys [weight duration]}]
+   (let [user-weight (or weight (get (first (vals @user-register)) :peso))]
+     (try
+       (let [params (cond-> {:activity activity}
+                      user-weight (assoc :weight user-weight)
+                      duration (assoc :duration duration))
+             response (client/get ninjas-api-url
+                                  {:query-params params
+                                   :headers {"X-Api-Key" ninjas-api-key}
+                                   :as :json})]
+         (if (= 200 (:status response))
+           (:body response)
+           {:error "Unable to fetch calories burned data"}))
+       (catch Exception e
+         {:error (str "Error calling Ninjas API: " (.getMessage e))})))))
 
 
 (defn translate-text [text target-lang & {:keys [source-lang]}]
@@ -98,10 +103,6 @@
 (defn take-four-list [foods]
   (take 4 foods))
 
-(def registros-alimentacao (atom {}))
-(def registros-exercicios (atom {}))
-(def user-register (atom {}))
-
 (defn save-registro-alimentacao [registro]
   (let [id (str (java.util.UUID/randomUUID))]
     (swap! registros-alimentacao assoc id registro)))
@@ -144,27 +145,30 @@
               filtered-list (map #(select-keys % [:descricao :calorias]) calories-data)]
           {:status 200 :body (json/generate-string filtered-list)}))))
 
-  (GET "/api/exercicios/:exercise" [exercise weight duration]
+  (GET "/api/exercicios/:exercise" [exercise duration]
     (if (empty? @user-register)
       {:status 403 :body (json/generate-string {:error "Usuário não registrado"})}
-      (let [weight-num (when weight (Integer/parseInt weight))
-            duration-num (when duration (Integer/parseInt duration))
-            exercise-results (search-exercises exercise weight-num duration-num)]
+      (let [duration-num (when duration (Integer/parseInt duration))
+            exercise-results (search-exercises exercise nil duration-num)]
         (if (:error exercise-results)
           {:status 500 :body (json/generate-string {:error (:error exercise-results)})}
           (como-json exercise-results)))))
 
   (POST "/registro-exercicio" req
-    (let [body (:body req)
-          exercise-data (:exercise body)
-          original-name (:original_name body)]
-      (if (and exercise-data original-name)
-        (let [saved-exercise (save-exercise-choice exercise-data original-name)]
-          (como-json {:success true :exercise saved-exercise}))
-        {:status 400 :body (json/generate-string {:error "Missing exercise data or original name"})})))
+    (if (empty? @user-register)
+      {:status 403 :body (json/generate-string {:error "Usuário não registrado"})}
+      (let [body (:body req)
+            exercise-data (:exercise body)
+            original-name (:original_name body)]
+        (if (and exercise-data original-name)
+          (let [saved-exercise (save-exercise-choice exercise-data original-name)]
+            (como-json {:success true :exercise saved-exercise}))
+          {:status 400 :body (json/generate-string {:error "Missing exercise data or original name"})}))))
 
   (GET "/exercicios-salvos" []
-    (como-json (vals @registros-exercicios)))
+    (if (empty? @user-register)
+      {:status 403 :body (json/generate-string {:error "Usuário não registrado"})}
+      (como-json (vals @registros-exercicios))))
 
   (POST "/api/translate" req
     (let [body (:body req)
@@ -179,34 +183,45 @@
         {:status 400 :body (json/generate-string {:error "Missing required parameters: text and target_lang"})})))
 
   (GET "/alimentos-salvos" []
-    (println "Registros: " @registros-alimentacao)
-    (json/generate-string (map #(select-keys % [:alimento :calorias]) (vals @registros-alimentacao))))
+    (if (empty? @user-register)
+      {:status 403 :body (json/generate-string {:error "Usuário não registrado"})}
+      (do
+        (println "Registros: " @registros-alimentacao)
+        (como-json (map #(select-keys % [:alimento :calorias]) (vals @registros-alimentacao))))))
 
-  (GET "/calorias-total" []
-    (let [exercises (vals @registros-exercicios)
-          alimentos (vals @registros-alimentacao)
-          total-calorias (calc-calorias-total exercises alimentos)]
-      {:status 200
-       :headers {"Content-Type" "application/json; charset=utf-8"}
-       :body (json/generate-string {:total-calorias total-calorias})}))
+      (GET "/calorias-total" []
+        (if (empty? @user-register)
+          {:status 403 :body (json/generate-string {:error "Usuário não registrado"})}
+          (let [exercises (vals @registros-exercicios)
+                alimentos (vals @registros-alimentacao)
+                total-calorias (calc-calorias-total exercises alimentos)]
+            {:status 200
+             :headers {"Content-Type" "application/json; charset=utf-8"}
+             :body (json/generate-string {:total-calorias total-calorias})})))
 
   (POST "/registro-usuario" req
     (if (contains? req :body)
-      (let [user-data (select-keys (:body req) [:nome :email :senha])]
-        (save-user user-data)
-        {:status 200
+      (if (empty? @user-register)
+        (let [user-data (select-keys (:body req) [:nome :email :senha :altura :peso :sexo])]
+          (save-user user-data)
+          {:status 200
+           :headers {"Content-Type" "application/json; charset=utf-8"}
+           :body (json/generate-string @user-register)})
+        {:status 403
          :headers {"Content-Type" "application/json; charset=utf-8"}
-         :body (json/generate-string @user-register)})
+         :body (json/generate-string {:error "Já existe um usuário registrado"})})
       {:status 400 :body "Bad Request"}))
 
   (POST "/registro-alimentacao" req
-    (if (contains? req :body)
-      (let [registro (select-keys (:body req) [:alimento :calorias])]
-        (save-registro-alimentacao registro)
-        {:status 200
-         :headers {"Content-Type" "application/json; charset=utf-8"}
-         :body (json/generate-string @registros-alimentacao)})
-      {:status 400 :body "Bad Request"}))
+    (if (empty? @user-register)
+      {:status 403 :body (json/generate-string {:error "Usuário não registrado"})}
+      (if (contains? req :body)
+        (let [registro (select-keys (:body req) [:alimento :calorias])]
+          (save-registro-alimentacao registro)
+          {:status 200
+           :headers {"Content-Type" "application/json; charset=utf-8"}
+           :body (json/generate-string @registros-alimentacao)})
+        {:status 400 :body "Bad Request"})))
 
   (route/not-found "Not Found"))
 
