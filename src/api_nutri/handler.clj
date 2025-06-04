@@ -5,7 +5,9 @@
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.json :refer [wrap-json-body]]
             [clj-http.client :as client]
-            [cheshire.core :as json]))
+            [cheshire.core :as json]
+            [java-time :as t])
+  (:import [java.time LocalDate]))
 
 (def api-url-comida "https://caloriasporalimentoapi.herokuapp.com/api/calorias/?descricao=")
 (def ninjas-api-url "https://api.api-ninjas.com/v1/caloriesburned")
@@ -104,16 +106,19 @@
   (take 4 foods))
 
 (defn save-registro-alimentacao [registro]
-  (let [id (str (java.util.UUID/randomUUID))]
-    (swap! registros-alimentacao assoc id registro)))
+  (let [id (str (java.util.UUID/randomUUID))
+        registro-com-data (assoc registro :data-criacao (str (LocalDate/now)))]
+    (swap! registros-alimentacao assoc id registro-com-data)))
 
 (defn save-registro-exercicio [registro]
-  (let [id (str (java.util.UUID/randomUUID))]
-    (swap! registros-exercicios assoc id registro)))
+  (let [id (str (java.util.UUID/randomUUID))
+        registro-com-data (assoc registro :data-criacao (str (LocalDate/now)))]
+    (swap! registros-exercicios assoc id registro-com-data)))
 
 (defn save-user [user]
-  (let [id (str (java.util.UUID/randomUUID))]
-    (swap! user-register assoc id user)))
+  (let [id (str (java.util.UUID/randomUUID))
+        user-com-data (assoc user :data-criacao (str (LocalDate/now)))]
+    (swap! user-register assoc id user-com-data)))
 
 (defn save-exercise-choice [exercise-data original-name-pt]
   (let [exercise-record {:nome (or (:nome-pt exercise-data) (:name exercise-data) "Exercício")
@@ -187,17 +192,24 @@
       {:status 403 :body (json/generate-string {:error "Usuário não registrado"})}
       (do
         (println "Registros: " @registros-alimentacao)
-        (como-json (map #(select-keys % [:alimento :calorias]) (vals @registros-alimentacao))))))
+        (como-json (map #(select-keys % [:alimento :calorias :data-criacao]) (vals @registros-alimentacao))))))
 
-      (GET "/calorias-total" []
-        (if (empty? @user-register)
-          {:status 403 :body (json/generate-string {:error "Usuário não registrado"})}
-          (let [exercises (vals @registros-exercicios)
-                alimentos (vals @registros-alimentacao)
-                total-calorias (calc-calorias-total exercises alimentos)]
-            {:status 200
-             :headers {"Content-Type" "application/json; charset=utf-8"}
-             :body (json/generate-string {:total-calorias total-calorias})})))
+  (GET "/calorias-total" []
+    (if (empty? @user-register)
+      {:status 403 :body (json/generate-string {:error "Usuário não registrado"})}
+      (let [exercises (vals @registros-exercicios)
+            alimentos (vals @registros-alimentacao)
+            total-calorias (calc-calorias-total exercises alimentos)]
+        {:status 200
+         :headers {"Content-Type" "application/json; charset=utf-8"}
+         :body (json/generate-string {:total-calorias total-calorias})})))
+
+  (GET "/usuario" []
+    (if (empty? @user-register)
+    {:status 204}
+    {:status 200
+     :headers {"Content-Type" "application/json; charset=utf-8"}
+     :body (json/generate-string @user-register)}))
 
   (POST "/registro-usuario" req
     (if (contains? req :body)
